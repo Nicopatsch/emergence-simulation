@@ -24,17 +24,18 @@
 #include <stdio.h>
 #include <random>
 #include <iostream>
+#include <utility>
 
 using namespace std;
 enum experienceType {WOLVES, BEES, BIRDS, FLUID};
 
-experienceType experience = BEES;
+experienceType experience = FLUID;
 
-int width = 800;
-int height = 800;
+int width = 400;
+int height = 400;
 
 int size; //Size of the individuals
-int nbOfIndividuals;
+int nbOfParticles;
 float maxDelta; //maximum distance walked by a particle in one step
 float limit; //confort zone of the particles with respect to each other
 float groupLimit; //confort zone of the particles with respect to the group
@@ -89,7 +90,7 @@ private:
     sf::RectangleShape pointOfInterestRectangle2;
 public:
     Group(sf::Color color) {
-        for (int i=0 ; i<nbOfIndividuals ; i++) {
+        for (int i=0 ; i<nbOfParticles ; i++) {
             Particle particle(randomPositionBetween(pair<int, int>(0,0), pair<int, int>(800, 600)), color);
             particles.push_back(particle);
         }
@@ -106,44 +107,53 @@ public:
         float distanceToPoint;
         pair<float, float> pointOfInterestAttraction = pair<float, float>(0,0);
         pair<float, float> position;
-        
-        pair<float, float> groupForce;
         float distanceToParticle;
+        float forceIntensity;
         
-        for (auto p=particles.begin() ; p<particles.end() ; p++) {
-            position = p->getPosition();
+        vector<pair<pair<float, float>, pair<float, float>>> forces = vector<pair<pair<float, float>, pair<float, float>>>(nbOfParticles, make_pair(make_pair(0, 0), make_pair(0, 0)));
+        
+        /** BIG LOOP **/
+        for (int p=0 ; p<nbOfParticles ; p++) {
+            position = particles[p].getPosition();
             
-            if(distanceBetween(pointOfInterest1, p->getPosition())<distanceBetween(pointOfInterest2, p->getPosition())) {
+            if(distanceBetween(pointOfInterest1, position) < distanceBetween(pointOfInterest2, position)) {
                 //Calculating the ATTRACTION of the point of interest on the wolf
                 distanceToPoint = distanceBetween(pointOfInterest1, position);
                 if(distanceToPoint > distanceMin) {
-                    pointOfInterestAttraction.first = -hungerLevel*(position.first - pointOfInterest1.first) / distanceToPoint; //We divide by distanceToWolf to normalize the coordinate of the force vector
-                    pointOfInterestAttraction.second = -hungerLevel*(position.second - pointOfInterest1.second) / distanceToPoint;
+                    forces[p].second.first = -hungerLevel*(position.first - pointOfInterest1.first) / distanceToPoint; //We divide by distanceToWolf to normalize the coordinate of the force vector
+                    forces[p].second.second = -hungerLevel*(position.second - pointOfInterest1.second) / distanceToPoint;
                 }
             } else {
                 //Calculating the ATTRACTION of the point of interest on the wolf
                 distanceToPoint = distanceBetween(pointOfInterest2, position);
                 if(distanceToPoint > distanceMin) {
-                    pointOfInterestAttraction.first = -hungerLevel*(position.first - pointOfInterest2.first) / distanceToPoint; //We divide by distanceToWolf to normalize the coordinate of the force vector
-                    pointOfInterestAttraction.second = -hungerLevel*(position.second - pointOfInterest2.second) / distanceToPoint;
+                    forces[p].second.first = -hungerLevel*(position.first - pointOfInterest2.first) / distanceToPoint; //We divide by distanceToWolf to normalize the coordinate of the force vector
+                    forces[p].second.second = -hungerLevel*(position.second - pointOfInterest2.second) / distanceToPoint;
                 }
             }
             
             
             //Calculating the REPULSION of the horde on the wolf
-            groupForce = pair<float, float>(0,0);
-            for (auto otherParticle = particles.begin() ; otherParticle < particles.end() ; otherParticle++) {
-                distanceToParticle = distanceBetween(otherParticle->getPosition(), position);
-                if(distanceToParticle > limit) {
-                    float forceIntensity = - forceCoeff * exp(-distanceToParticle/limit) * (1 - 2*distanceToParticle);
-                    //                    float repulsionIntensity = repulsionCoeff * exp(-distanceToWolf/limit);
-                    //                    cout << "distanceToWolf = " << distanceToWolf <<endl;
-                    //                    cout << "forceIntensity = " << forceIntensity <<endl;
-                    groupForce.first += forceIntensity*(position.first - otherParticle->getPosition().first) / distanceToParticle; //We divide by distanceToWolf to normalize the coordinate of the force vector
-                    groupForce.second += forceIntensity*(position.second - otherParticle->getPosition().second) / distanceToParticle;
-                }
+//            groupForce = pair<float, float>(0,0);
+            pair<float, float> otherPosition;
+            
+            /** SMALL LOOP **/
+            for (int otherP = p+1 ; otherP < nbOfParticles ; otherP++) {
+                
+                otherPosition = particles[otherP].getPosition();
+                distanceToParticle = distanceBetween(otherPosition, position);
+                
+                forceIntensity = - 0.5*forceCoeff * exp(-distanceToParticle/limit) * (0.5 - 3*distanceToParticle);
+                forces[p].first.first += forceIntensity*(position.first - otherPosition.first) / distanceToParticle; //We divide by distanceToWolf to normalize the coordinate of the force vector
+                forces[p].first.second += forceIntensity*(position.second - otherPosition.second) / distanceToParticle;
+                
+                forces[otherP].first.first += -forces[p].first.first; //We divide by distanceToWolf to normalize the coordinate of the force vector
+                forces[otherP].first.second += -forces[p].first.second;
             }
-            p->updatePos(groupForce, pointOfInterestAttraction);
+        }
+        for (int i = 0 ; i< nbOfParticles ; i++) {
+            particles[i].updatePos(forces[i].first, forces[i].second);
+//            cout << "forces["<<i<<"] = ( "<<forces[i].first.first<<" ; "<<forces[i].first.second<<" ) et ( "<<forces[i].second.first<<" ; "<<forces[i].second.second<<" )"<<endl;
         }
     }
     
@@ -183,7 +193,7 @@ int main(int, char const**)
     
     if(experience == experienceType::WOLVES) {
         size = 5;
-        nbOfIndividuals = 20;
+        nbOfParticles = 20;
         maxDelta = 1; //maximum distance walked by a wolf in one step
         limit = 10; //confort zone of the wolves with respect to each other
         groupLimit = 5; //confort zone of the wolves with respect to the horde
@@ -192,7 +202,7 @@ int main(int, char const**)
         distanceMin = 30; //Perimeter in which the pointOfInterest is concidered reached
     } else if(experience == experienceType::BEES) {
         size = 2;
-        nbOfIndividuals = 1000;
+        nbOfParticles = 1000;
         maxDelta = 10; //maximum distance walked by a wolf in one step
         limit = 3; //confort zone of the wolves with respect to each other
         groupLimit = 100; //confort zone of the wolves with respect to the horde
@@ -201,7 +211,7 @@ int main(int, char const**)
         distanceMin = 20; //Perimeter in which the pointOfInterest is concidered reached
     } else if(experience == experienceType::BIRDS) {
         size = 4;
-        nbOfIndividuals = 500;
+        nbOfParticles = 500;
         maxDelta = 20; //maximum distance walked by a wolf in one step
         limit = 10; //confort zone of the wolves with respect to each other
         groupLimit = 10; //confort zone of the wolves with respect to the horde
@@ -210,11 +220,11 @@ int main(int, char const**)
         distanceMin = 100; //Perimeter in which the pointOfInterest is concidered reached
     } else if(experience == experienceType::FLUID) {
         size = 1;
-        nbOfIndividuals = 2000;
+        nbOfParticles = 2500;
         maxDelta = 20; //maximum distance walked by a wolf in one step
         limit = 2; //confort zone of the wolves with respect to each other
         groupLimit = 5; //confort zone of the wolves with respect to the horde
-        forceCoeff = 5; //Maximum intensity of the repulsion force between 2 wolves
+        forceCoeff = 2; //Maximum intensity of the repulsion force between 2 wolves
         hungerLevel = 5; //Level of attraction of the points of interest
         distanceMin = 10; //Perimeter in which the pointOfInterest is concidered reached
     }
