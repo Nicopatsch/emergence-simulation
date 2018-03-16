@@ -29,34 +29,43 @@
 using namespace std;
 enum experienceType {WOLVES, BEES, BIRDS, FLUID};
 
-experienceType experience = FLUID;
+experienceType experience = BIRDS;
 
-int width = 400;
-int height = 400;
+int width = 4000;
+int height = 4000;
 
 int size; //Size of the individuals
 int nbOfParticles;
 float maxDelta; //maximum distance walked by a particle in one step
 float limit; //confort zone of the particles with respect to each other
-float groupLimit; //confort zone of the particles with respect to the group
-float forceCoeff; //Maximum intensity of the repulsion force between 2 wolves
+float seperationIntensity; //Maximum intensity of the repulsion force between 2 wolves
 float hungerLevel; //Level of attraction of the points of interest
 float distanceMin; //Perimeter in which the pointOfInterest is concidered reached
+float velocityInfluence = 1; //Influence of the velocity of the swarm
+float swarmCohesion = .01; //Intensity of the cohesion of the group
 class Particle;
 float min(float first, float second);
 std::pair<float, float> getBarycenter(std::vector<Particle> group);
-float distanceBetween(pair<float, float> a, pair<float, float> b);
+float distanceBetween(pair<float, float>& a, pair<float, float>& b);
 pair<int, int> randomPositionBetween(pair<int, int> inf, pair<int, int> sup);
 
+using vector2D = pair<float, float>;
 
-class Particle {
-private:
-    pair<float, float> position;
+struct Particle {
+    constexpr static const float mass = 10.f; //kg
+    constexpr static const float squaredMaxSpeed = 100.f;
+    vector2D position;
+    vector2D velocity;
+    vector2D forcesOnParticle;
+    vector2D forcesOnSwarm;
+    
     sf::RectangleShape rectangle;
     
-public:
     Particle(pair<int, int> position, sf::Color color) {
         this->position = position;
+        velocity = make_pair(0, 0);
+        forcesOnParticle = make_pair(0, 0);
+        forcesOnSwarm = make_pair(0, 0);
         rectangle.setSize(sf::Vector2f(size, size));
         rectangle.setFillColor(color);
         rectangle.setPosition(position.first, position.second);
@@ -65,19 +74,26 @@ public:
     void draw(sf::RenderWindow& window) {
         window.draw(rectangle);
     }
-    void updatePos(pair<float, float> groupForce, pair<float, float> pointOfInterestAttraction) {
-        float deltaX = groupForce.first + pointOfInterestAttraction.first;
-        float deltaY = groupForce.second + pointOfInterestAttraction.second;
+    
+    void updatePos() {
+        float squaredSpeed = pow(velocity.first, 2) + pow(velocity.second, 2);
+        if(squaredSpeed > squaredMaxSpeed) {
+            velocity.first /= (squaredSpeed / squaredMaxSpeed);
+            velocity.second /= (squaredSpeed / squaredMaxSpeed);
+        }
+        static const float timeDelta = 1.f; //seconde
+        velocity.first += timeDelta * forcesOnParticle.first / mass;
+        velocity.second += timeDelta * forcesOnParticle.second / mass;
         
+        velocity.first += timeDelta * forcesOnSwarm.first / mass;
+        velocity.second += timeDelta * forcesOnSwarm.second / mass;
         
-        position.first+=min(deltaX, maxDelta);
-        position.second+=min(deltaY, maxDelta);
+        position.first += velocity.first*timeDelta;
+        position.second += velocity.second*timeDelta;
+        
         rectangle.setPosition(round(position.first), round(position.second));
     }
     
-    pair<float, float> getPosition() {
-        return position;
-    }
 };
 
 
@@ -91,7 +107,7 @@ private:
 public:
     Group(sf::Color color) {
         for (int i=0 ; i<nbOfParticles ; i++) {
-            Particle particle(randomPositionBetween(pair<int, int>(0,0), pair<int, int>(800, 600)), color);
+            Particle particle(randomPositionBetween(pair<int, int>(0,0), pair<int, int>(width, height)), color);
             particles.push_back(particle);
         }
         
@@ -105,55 +121,64 @@ public:
     
     void updatePos() {
         float distanceToPoint;
-        pair<float, float> pointOfInterestAttraction = pair<float, float>(0,0);
-        pair<float, float> position;
+        vector2D pointOfInterestAttraction = vector2D(0,0);
+        vector2D* pPosition;
+        vector2D* otherPosition;
         float distanceToParticle;
         float forceIntensity;
-        
-        vector<pair<pair<float, float>, pair<float, float>>> forces = vector<pair<pair<float, float>, pair<float, float>>>(nbOfParticles, make_pair(make_pair(0, 0), make_pair(0, 0)));
+        vector2D swarmCenter = getBarycenter();
+        vector2D averageVelocity = getAverageVelocity();
         
         /** BIG LOOP **/
         for (int p=0 ; p<nbOfParticles ; p++) {
-            position = particles[p].getPosition();
-            
-            if(distanceBetween(pointOfInterest1, position) < distanceBetween(pointOfInterest2, position)) {
-                //Calculating the ATTRACTION of the point of interest on the wolf
-                distanceToPoint = distanceBetween(pointOfInterest1, position);
-                if(distanceToPoint > distanceMin) {
-                    forces[p].second.first = -hungerLevel*(position.first - pointOfInterest1.first) / distanceToPoint; //We divide by distanceToWolf to normalize the coordinate of the force vector
-                    forces[p].second.second = -hungerLevel*(position.second - pointOfInterest1.second) / distanceToPoint;
-                }
-            } else {
-                //Calculating the ATTRACTION of the point of interest on the wolf
-                distanceToPoint = distanceBetween(pointOfInterest2, position);
-                if(distanceToPoint > distanceMin) {
-                    forces[p].second.first = -hungerLevel*(position.first - pointOfInterest2.first) / distanceToPoint; //We divide by distanceToWolf to normalize the coordinate of the force vector
-                    forces[p].second.second = -hungerLevel*(position.second - pointOfInterest2.second) / distanceToPoint;
-                }
-            }
             
             
+            //particles[p].forcesOnSwarm = make_pair(0, 0);
+            //particles[p].forcesOnParticle = make_pair(0, 0);
+            //computeInterestPointsInfluenceHard(particles[p]);
+            computeInterestPointsInfluenceSoft(particles[p]);
+            
+            
+            pPosition = &(particles[p].position);
+            /*** COHESION ***/
+            particles[p].forcesOnParticle.first += swarmCohesion*(swarmCenter.first - pPosition->first);
+            particles[p].forcesOnParticle.second += swarmCohesion*(swarmCenter.second - pPosition->second);
+            
+            
+            /*** ALIGNMENT ***/
+            particles[p].forcesOnParticle.first += velocityInfluence/5*averageVelocity.first;
+            particles[p].forcesOnParticle.second += velocityInfluence/5*averageVelocity.second;
+            
+            
+            
+            /*** SEPERATION ***/
             //Calculating the REPULSION of the horde on the wolf
-//            groupForce = pair<float, float>(0,0);
-            pair<float, float> otherPosition;
-            
             /** SMALL LOOP **/
             for (int otherP = p+1 ; otherP < nbOfParticles ; otherP++) {
                 
-                otherPosition = particles[otherP].getPosition();
-                distanceToParticle = distanceBetween(otherPosition, position);
+                otherPosition = &particles[otherP].position;
+                distanceToParticle = distanceBetween(*otherPosition, *pPosition);
                 
-                forceIntensity = - 0.5*forceCoeff * exp(-distanceToParticle/limit) * (0.5 - 3*distanceToParticle);
-                forces[p].first.first += forceIntensity*(position.first - otherPosition.first) / distanceToParticle; //We divide by distanceToWolf to normalize the coordinate of the force vector
-                forces[p].first.second += forceIntensity*(position.second - otherPosition.second) / distanceToParticle;
+                forceIntensity = - 0.5*seperationIntensity * exp(-distanceToParticle/limit) * (0.5 - 3*distanceToParticle);
                 
-                forces[otherP].first.first += -forces[p].first.first; //We divide by distanceToWolf to normalize the coordinate of the force vector
-                forces[otherP].first.second += -forces[p].first.second;
+                particles[p].forcesOnParticle.first += forceIntensity*(pPosition->first - otherPosition->first) / distanceToParticle; //We divide by distanceToWolf to normalize the coordinate of the force vector
+                particles[p].forcesOnParticle.second += forceIntensity*(pPosition->second - otherPosition->second) / distanceToParticle; //We divide by distanceToWolf to normalize the coordinate of the force vector
+
+                
+                particles[otherP].forcesOnParticle.first += -particles[p].forcesOnParticle.first; //We divide by distanceToWolf to normalize the coordinate of the force vector
+                particles[otherP].forcesOnParticle.second += -particles[p].forcesOnParticle.second;
+                
+                
+                /*** Custom alignment ***/
+                //inverse proportional to the distance of the particle
+                particles[p].forcesOnParticle.first += 0.1*velocityInfluence*velocityInfluence/distanceToParticle*particles[otherP].velocity.first;
+                particles[p].forcesOnParticle.second += 0.1*velocityInfluence*velocityInfluence/distanceToParticle*particles[otherP].velocity.second;
+                
             }
         }
+        
         for (int i = 0 ; i< nbOfParticles ; i++) {
-            particles[i].updatePos(forces[i].first, forces[i].second);
-//            cout << "forces["<<i<<"] = ( "<<forces[i].first.first<<" ; "<<forces[i].first.second<<" ) et ( "<<forces[i].second.first<<" ; "<<forces[i].second.second<<" )"<<endl;
+            particles[i].updatePos();
         }
     }
     
@@ -166,23 +191,72 @@ public:
         
     }
     
-    std::pair<float, float> getBarycenter() {
+    vector2D getBarycenter() {
         float avgX, avgY = 0;
         for (auto p=particles.begin() ; p<particles.end() ; p++) {
-            avgX+=p->getPosition().first;
-            avgY+=p->getPosition().second;
+            avgX+=p->position.first;
+            avgY+=p->position.second;
         }
         avgX = avgX/particles.size();
         avgY = avgY/particles.size();
-        pair<float, float> avg = pair<float, float>(avgX, avgY);
+        vector2D avg = vector2D(avgX, avgY);
         return avg;
     }
+    
+    
+    vector2D getAverageVelocity() {
+        float avgX, avgY = 0;
+        for (auto p=particles.begin() ; p<particles.end() ; p++) {
+            avgX+=p->velocity.first;
+            avgY+=p->velocity.second;
+        }
+        avgX = avgX/particles.size();
+        avgY = avgY/particles.size();
+        vector2D avg = vector2D(avgX, avgY);
+        return avg;
+    }
+    
+    void computeInterestPointsInfluenceHard(Particle& p) {
+        if(distanceBetween(pointOfInterest1, p.position) < distanceBetween(pointOfInterest2, p.position)) {
+            //Calculating the ATTRACTION of the point of interest on the wolf
+            float distanceToPoint = distanceBetween(pointOfInterest1, p.position);
+            if(distanceToPoint > distanceMin) {
+                p.forcesOnParticle.first = hungerLevel*(pointOfInterest1.first - p.position.first) / distanceToPoint;
+                p.forcesOnParticle.second = hungerLevel*(pointOfInterest1.second - p.position.second) / distanceToPoint;
+            }
+        } else {
+            //Calculating the ATTRACTION of the point of interest on the wolf
+            float distanceToPoint = distanceBetween(pointOfInterest2, p.position);
+            if(distanceToPoint > distanceMin) {
+                p.forcesOnParticle.first = hungerLevel*(pointOfInterest2.first - p.position.first) / distanceToPoint;
+                p.forcesOnParticle.second = hungerLevel*(pointOfInterest2.second - p.position.second) / distanceToPoint;
+            }
+        }
+        
+    }
+    
+    void computeInterestPointsInfluenceSoft(Particle& p) {
+    
+        float distanceToPoint = distanceBetween(pointOfInterest1, p.position);
+        p.forcesOnParticle.first = hungerLevel*distanceToPoint/100000.*(pointOfInterest1.first - p.position.first);
+        p.forcesOnParticle.second = hungerLevel*distanceToPoint/100000.*(pointOfInterest1.second - p.position.second);
+        
+    }
+    
     
     void newPointsOfInterest() {
         pointOfInterest1 = randomPositionBetween(pair<int, int>(0,0), pair<int, int>(width, height));
         pointOfInterestRectangle1.setPosition(pointOfInterest1.first, pointOfInterest1.second);
         pointOfInterest2 = randomPositionBetween(pair<int, int>(0,0), pair<int, int>(width, height));
         pointOfInterestRectangle2.setPosition(pointOfInterest2.first, pointOfInterest2.second);
+    }
+    
+    void centerPointsOfInterest(){
+        pointOfInterest1 = make_pair(width/4, height/4);
+        pointOfInterest2 = make_pair(width/4, height/4);
+        pointOfInterestRectangle1.setPosition(pointOfInterest1.first, pointOfInterest1.second);
+        pointOfInterestRectangle2.setPosition(pointOfInterest2.first, pointOfInterest2.second);
+        
     }
     
     
@@ -196,41 +270,38 @@ int main(int, char const**)
         nbOfParticles = 20;
         maxDelta = 1; //maximum distance walked by a wolf in one step
         limit = 10; //confort zone of the wolves with respect to each other
-        groupLimit = 5; //confort zone of the wolves with respect to the horde
-        forceCoeff = 5; //Maximum intensity of the repulsion force between 2 wolves
-        hungerLevel = 5; //Level of attraction of the points of interest
+        seperationIntensity = 5; //Maximum intensity of the repulsion force between 2 wolves
+        hungerLevel = 1; //Level of attraction of the points of interest
         distanceMin = 30; //Perimeter in which the pointOfInterest is concidered reached
     } else if(experience == experienceType::BEES) {
         size = 2;
-        nbOfParticles = 1000;
+        nbOfParticles = 1200;
         maxDelta = 10; //maximum distance walked by a wolf in one step
         limit = 3; //confort zone of the wolves with respect to each other
-        groupLimit = 100; //confort zone of the wolves with respect to the horde
-        forceCoeff = 2; //Maximum intensity of the repulsion force between 2 wolves
-        hungerLevel = 5; //Level of attraction of the points of interest
+        seperationIntensity = 2; //Maximum intensity of the repulsion force between 2 wolves
+        hungerLevel = 1; //Level of attraction of the points of interest
         distanceMin = 20; //Perimeter in which the pointOfInterest is concidered reached
     } else if(experience == experienceType::BIRDS) {
         size = 4;
         nbOfParticles = 500;
-        maxDelta = 20; //maximum distance walked by a wolf in one step
+        maxDelta = 1; //maximum distance walked by a wolf in one step
         limit = 10; //confort zone of the wolves with respect to each other
-        groupLimit = 10; //confort zone of the wolves with respect to the horde
-        forceCoeff = 5; //Maximum intensity of the repulsion force between 2 wolves
+        seperationIntensity = 1; //Maximum intensity of the repulsion force between 2 wolves
         hungerLevel = 1; //Level of attraction of the points of interest
         distanceMin = 100; //Perimeter in which the pointOfInterest is concidered reached
     } else if(experience == experienceType::FLUID) {
         size = 1;
-        nbOfParticles = 2500;
+        nbOfParticles = 3000;
         maxDelta = 20; //maximum distance walked by a wolf in one step
         limit = 2; //confort zone of the wolves with respect to each other
-        groupLimit = 5; //confort zone of the wolves with respect to the horde
-        forceCoeff = 2; //Maximum intensity of the repulsion force between 2 wolves
-        hungerLevel = 5; //Level of attraction of the points of interest
+        seperationIntensity = 2; //Maximum intensity of the repulsion force between 2 wolves
+        hungerLevel = 1; //Level of attraction of the points of interest
         distanceMin = 10; //Perimeter in which the pointOfInterest is concidered reached
     }
     
-    Group group1 = Group(sf::Color::Black);
-//    Group group2 = Group(sf::Color::Green);
+    Group group1 = Group(sf::Color::White);
+    Group group2 = Group(sf::Color::Green);
+    Group group3 = Group(sf::Color::Red);
     
     sf::RenderWindow window(sf::VideoMode(width, height), "SFML window");
     window.setFramerateLimit(60);
@@ -255,25 +326,35 @@ int main(int, char const**)
             //Press space to generate new points of interest
             if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Space) {
                 group1.newPointsOfInterest();
-//                group2.newPointsOfInterest();
+                group2.newPointsOfInterest();
+                group3.newPointsOfInterest();
+            }
+            
+            //Press space to generate new points of interest
+            if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::C) {
+                group1.centerPointsOfInterest();
+                group2.centerPointsOfInterest();
+                group3.centerPointsOfInterest();
             }
         }
         
         // Clear screen
-        window.clear(sf::Color::White);
+        window.clear(sf::Color::Black);
         
         
         group1.updatePos();
         group1.draw(window);
-//        group2.updatePos();
-//        group2.draw(window);
+        /*group2.updatePos();
+        group2.draw(window);
+        group3.updatePos();
+        group3.draw(window);*/
         window.display();
     }
     
     return EXIT_SUCCESS;
 }
 
-float distanceBetween(pair<float, float> a, pair<float, float> b) {
+float distanceBetween(pair<float, float>& a, pair<float, float>& b) {
     return sqrt((a.first - b.first) * (a.first - b.first) + (a.second - b.second) * (a.second - b.second));
 }
 
