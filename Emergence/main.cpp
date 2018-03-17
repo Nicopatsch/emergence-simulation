@@ -29,10 +29,10 @@
 using namespace std;
 enum experienceType {WOLVES, BEES, BIRDS, FLUID};
 
-experienceType experience = BIRDS;
+experienceType experience = BEES;
 
-int width = 4000;
-int height = 4000;
+int width = 3000;
+int height = 3000;
 
 int size; //Size of the individuals
 int nbOfParticles;
@@ -41,19 +41,21 @@ float limit; //confort zone of the particles with respect to each other
 float seperationIntensity; //Maximum intensity of the repulsion force between 2 wolves
 float hungerLevel; //Level of attraction of the points of interest
 float distanceMin; //Perimeter in which the pointOfInterest is concidered reached
-float velocityInfluence = 1; //Influence of the velocity of the swarm
+float velocityInfluence; //Influence of the velocity of the swarm
 float swarmCohesion = .01; //Intensity of the cohesion of the group
 class Particle;
 float min(float first, float second);
-std::pair<float, float> getBarycenter(std::vector<Particle> group);
-float distanceBetween(pair<float, float>& a, pair<float, float>& b);
-pair<int, int> randomPositionBetween(pair<int, int> inf, pair<int, int> sup);
 
 using vector2D = pair<float, float>;
+vector2D getBarycenter(std::vector<Particle> group);
+float distanceBetween(vector2D& a, vector2D& b);
+pair<int, int> randomPositionBetween(pair<int, int> inf, pair<int, int> sup);
+
+
 
 struct Particle {
     constexpr static const float mass = 10.f; //kg
-    constexpr static const float squaredMaxSpeed = 100.f;
+    constexpr static const float squaredMaxSpeed = 50.f;
     vector2D position;
     vector2D velocity;
     vector2D forcesOnParticle;
@@ -132,9 +134,10 @@ public:
         /** BIG LOOP **/
         for (int p=0 ; p<nbOfParticles ; p++) {
             
+            //Initializing forces
+            particles[p].forcesOnSwarm = make_pair(0, 0);
+            particles[p].forcesOnParticle = make_pair(0, 0);
             
-            //particles[p].forcesOnSwarm = make_pair(0, 0);
-            //particles[p].forcesOnParticle = make_pair(0, 0);
             //computeInterestPointsInfluenceHard(particles[p]);
             computeInterestPointsInfluenceSoft(particles[p]);
             
@@ -145,9 +148,9 @@ public:
             particles[p].forcesOnParticle.second += swarmCohesion*(swarmCenter.second - pPosition->second);
             
             
-            /*** ALIGNMENT ***/
-            particles[p].forcesOnParticle.first += velocityInfluence/5*averageVelocity.first;
-            particles[p].forcesOnParticle.second += velocityInfluence/5*averageVelocity.second;
+            /*** GLOBAL ALIGNMENT ***/
+            particles[p].forcesOnParticle.first += velocityInfluence/50*averageVelocity.first;
+            particles[p].forcesOnParticle.second += velocityInfluence/50*averageVelocity.second;
             
             
             
@@ -158,6 +161,10 @@ public:
                 
                 otherPosition = &particles[otherP].position;
                 distanceToParticle = distanceBetween(*otherPosition, *pPosition);
+                
+                
+                //distanceToPoint = -min(-distanceToPoint,-1); // max
+                
                 
                 forceIntensity = - 0.5*seperationIntensity * exp(-distanceToParticle/limit) * (0.5 - 3*distanceToParticle);
                 
@@ -171,8 +178,11 @@ public:
                 
                 /*** Custom alignment ***/
                 //inverse proportional to the distance of the particle
-                particles[p].forcesOnParticle.first += 0.1*velocityInfluence*velocityInfluence/distanceToParticle*particles[otherP].velocity.first;
-                particles[p].forcesOnParticle.second += 0.1*velocityInfluence*velocityInfluence/distanceToParticle*particles[otherP].velocity.second;
+                
+                //*** ??? ***//
+                
+                particles[p].forcesOnParticle.first += 1.*velocityInfluence/pow(distanceToParticle/10.,2)*particles[otherP].velocity.first;
+                particles[p].forcesOnParticle.second += 1.*velocityInfluence/pow(distanceToParticle/10.,2)*particles[otherP].velocity.second;
                 
             }
         }
@@ -236,10 +246,12 @@ public:
     }
     
     void computeInterestPointsInfluenceSoft(Particle& p) {
-    
+        static int perimetre = 600;
         float distanceToPoint = distanceBetween(pointOfInterest1, p.position);
-        p.forcesOnParticle.first = hungerLevel*distanceToPoint/100000.*(pointOfInterest1.first - p.position.first);
-        p.forcesOnParticle.second = hungerLevel*distanceToPoint/100000.*(pointOfInterest1.second - p.position.second);
+        if(distanceToPoint > perimetre) {
+            p.forcesOnParticle.first += hungerLevel*(100 + distanceToPoint-perimetre)/10000.*(pointOfInterest1.first - p.position.first);
+            p.forcesOnParticle.second += hungerLevel*(100 + distanceToPoint-perimetre)/10000.*(pointOfInterest1.second - p.position.second);
+        }
         
     }
     
@@ -273,6 +285,7 @@ int main(int, char const**)
         seperationIntensity = 5; //Maximum intensity of the repulsion force between 2 wolves
         hungerLevel = 1; //Level of attraction of the points of interest
         distanceMin = 30; //Perimeter in which the pointOfInterest is concidered reached
+        velocityInfluence = 50;
     } else if(experience == experienceType::BEES) {
         size = 2;
         nbOfParticles = 1200;
@@ -281,6 +294,7 @@ int main(int, char const**)
         seperationIntensity = 2; //Maximum intensity of the repulsion force between 2 wolves
         hungerLevel = 1; //Level of attraction of the points of interest
         distanceMin = 20; //Perimeter in which the pointOfInterest is concidered reached
+        velocityInfluence = .1;
     } else if(experience == experienceType::BIRDS) {
         size = 4;
         nbOfParticles = 500;
@@ -289,6 +303,7 @@ int main(int, char const**)
         seperationIntensity = 1; //Maximum intensity of the repulsion force between 2 wolves
         hungerLevel = 1; //Level of attraction of the points of interest
         distanceMin = 100; //Perimeter in which the pointOfInterest is concidered reached
+        velocityInfluence = 1;
     } else if(experience == experienceType::FLUID) {
         size = 1;
         nbOfParticles = 3000;
@@ -297,6 +312,7 @@ int main(int, char const**)
         seperationIntensity = 2; //Maximum intensity of the repulsion force between 2 wolves
         hungerLevel = 1; //Level of attraction of the points of interest
         distanceMin = 10; //Perimeter in which the pointOfInterest is concidered reached
+        velocityInfluence = .01;
     }
     
     Group group1 = Group(sf::Color::White);
@@ -354,7 +370,7 @@ int main(int, char const**)
     return EXIT_SUCCESS;
 }
 
-float distanceBetween(pair<float, float>& a, pair<float, float>& b) {
+float distanceBetween(vector2D& a, vector2D& b) {
     return sqrt((a.first - b.first) * (a.first - b.first) + (a.second - b.second) * (a.second - b.second));
 }
 
